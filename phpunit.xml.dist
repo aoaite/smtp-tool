@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Defaults point at the test server from docker-compose.yml.
+    To test another server, copy this file to phpunit.xml (git-ignored) and change the values,
+    or set the variables in the environment (environment variables take precedence).
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+>
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="SMTP_HOSTNAME" value="127.0.0.1"/>
+        <env name="SMTP_PORT" value="2525"/>
+        <env name="SMTP_SSL_PORT" value="4650"/>
+        <env name="SMTP_SUBMISSION_PORT" value="5870"/>
+        <env name="SMTP_USERNAME" value="username"/>
+        <env name="SMTP_PASSWORD" value="password"/>
+        <env name="SMTP_EXISTING_EMAIL" value="existing@example.com"/>
+    </php>
+</phpunit>

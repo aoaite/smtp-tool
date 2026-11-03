@@ -1,6 +1,6 @@
 <?php
 
-namespace Tests\Unit;
+namespace Tests\Integration;
 
 use Aoaite\SmtpTool\Auth\AuthLogin;
 use Aoaite\SmtpTool\Auth\AuthPlain;
