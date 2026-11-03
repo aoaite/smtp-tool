@@ -28,6 +28,8 @@ $context = new SMTPConnectionContext(SMTPEncryption::STARTTLS);
 $client->connect('mail.example.com', 587, $context); // false if no 220 greeting / STARTTLS failed
 
 $client->getGreeting();               // "220 mail.example.com ESMTP\r\n"
+$client->getGreetingDomain();         // "mail.example.com" (from the banner)
+$client->getEhloDomain();             // "mail.example.com" (from the EHLO reply)
 $client->getServerCapabilities();     // ["PIPELINING", "SIZE 10240000", "AUTH PLAIN LOGIN", ...]
 $client->hasCapability('DSN');        // true / false
 $client->getServerLoginCapabilities();// ["PLAIN", "LOGIN"]
@@ -66,6 +68,30 @@ $sent = $client->sendMail($message, ['SUCCESS', 'FAILURE'], $results);
 `sendMail()` keeps going if only some recipients are rejected, and sends `RSET` if the
 transaction is aborted before `DATA`, so the connection can be reused.
 
+`sendMailWithBdat($message, $chunkSize)` does the same with `BDAT` (RFC 3030 CHUNKING) instead
+of `DATA`: the content is sent as-is in chunks of at most `$chunkSize` bytes (`0`: one chunk).
+
+### Certificates
+
+```php
+$context = new SMTPConnectionContext(SMTPEncryption::STARTTLS); // verification is on by default
+$context->setPeerName('mx.example.com');  // the name the certificate must be valid for
+                                          // (default: the host you connect to, e.g. an IP)
+$context->setCAFile('/path/to/ca.pem');   // optional: a private CA instead of the system CAs
+$client->connect('203.0.113.5', 25, $context); // throws ConnectionException with the reason
+                                               // ("certificate verify failed", name mismatch, ...)
+
+$certificate = $client->getConnectionMeta()->getPeerCertificate();
+$certificate->getSubjectCommonName();     // "mx.example.com"
+$certificate->getDnsNames();              // ["mx.example.com", "*.mx.example.com"]
+$certificate->getIssuerOrganization();    // "Let's Encrypt"
+$certificate->getDaysUntilExpiry();       // 61
+$certificate->matchesHostname($client->getEhloDomain()); // does the announced name match?
+```
+
+The certificate is also available with verification disabled, so a self-signed one can be
+inspected too.
+
 ### Sending odd input
 
 Normal commands refuse CR/LF characters, so a value can't inject extra commands by accident.
@@ -94,15 +120,25 @@ $client->sendMail(new CrudeMessage(
 
 // Change the line separator used for commands and replies (default "\r\n")
 $client->getConnection()->setSeparators("\n");
+
+// Talk before the greeting (pregreet), e.g. to check postscreen catches it:
+// open() only connects, nothing is read or sent
+$client->open('mail.example.com', 25, new SMTPConnectionContext());
+$client->sendRaw("EHLO early.example.com\r\n", false);
+$client->readGreeting();      // postscreen leaves its "220-" greeting unfinished for early talkers
+$client->readReply();         // the reply to the early EHLO
+// ... greetServer(), startTls() and the other commands work as usual from here
 ```
 
 ## Example tests
 
-[`examples/`](examples/) has ready-made PHPUnit tests for checking a server: greeting and TLS,
-authentication (not offered in plaintext, wrong passwords rejected, submission requires login),
-mail transactions (no open relay, unknown recipients rejected, null sender accepted) and malformed
-input (out-of-sequence commands, SMTP smuggling). Point them at your server via `phpunit.xml`
-and run:
+[`examples/`](examples/) has ready-made PHPUnit tests for checking a server: greeting, TLS and
+pregreet detection, the certificate (trusted, issued for the expected hostname, not expiring
+soon, matching the announced hostname), authentication (not offered in plaintext, wrong passwords
+rejected, submission requires login), mail transactions (no open relay, unknown recipients
+rejected, null sender accepted) and malformed input (out-of-sequence commands, SMTP smuggling
+with DATA and BDAT). Point them at your server via `phpunit.xml` (see
+[`examples/README.md`](examples/README.md)) and run:
 
 ```bash
 composer test:examples
@@ -115,8 +151,10 @@ composer test               # unit tests, no server needed (uses a scripted fake
 ```
 
 The integration tests run against a real server. `docker-compose.yml` provides a Postfix test
-server (self-signed certificate, user `username` / `password`, mailbox `existing@example.com`)
-on 127.0.0.1 ports 2525 (smtp), 4650 (smtps) and 5870 (submission):
+server (user `username` / `password`, mailbox `existing@example.com`, a certificate for
+`mail.example.com` issued by the test-only CA in `docker/postfix/tls/ca.pem`) on 127.0.0.1
+ports 2525 (smtp), 4650 (smtps), 5870 (submission) and 2526 (postscreen, rejects clients that
+talk before the greeting):
 
 ```bash
 docker compose up -d --wait

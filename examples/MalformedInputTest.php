@@ -2,6 +2,7 @@
 
 namespace Examples;
 
+use Aoaite\SmtpTool\Mail\CrudeMessage;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
@@ -69,5 +70,47 @@ class MalformedInputTest extends SmtpServerTestCase
             return;
         }
         $this->assertReplyCode(250, $this->client->sendCommand('NOOP'));
+    }
+
+    public static function bdatChunkSizes(): array
+    {
+        return [
+            'one chunk' => [0],
+            // The first chunk ends with "body<CRLF>", the next starts with ".<CRLF>XSMUGGLED":
+            // for servers that glue chunks together and look for "<CRLF>.<CRLF>"
+            'split chunks' => [38],
+        ];
+    }
+
+    /**
+     * With BDAT (RFC 3030 CHUNKING) the announced size decides where the message ends, so a
+     * "." line is just content. A server that converts BDAT to DATA internally without
+     * dot-stuffing would end the message early and run the smuggled command.
+     */
+    #[DataProvider('bdatChunkSizes')]
+    public function test_bdat_fake_end_of_data_is_message_content(int $chunkSize): void
+    {
+        $this->connectSmtp();
+        if (!$this->client->hasCapability('CHUNKING')) {
+            $this->markTestSkipped('Server does not advertise CHUNKING');
+        }
+        $content = "Subject: smtp-tool BDAT test\r\n\r\nbody\r\n.\r\nXSMUGGLED\r\n";
+        $message = new CrudeMessage($this->mailbox(), $this->mailbox(), $content);
+        $this->assertTrue($this->client->sendMailWithBdat($message, $chunkSize), $this->transcript());
+        $this->assertReplyCode(250, $this->client->sendCommand('NOOP'));
+    }
+
+    public function test_data_after_bdat_is_rejected(): void
+    {
+        $this->connectSmtp();
+        if (!$this->client->hasCapability('CHUNKING')) {
+            $this->markTestSkipped('Server does not advertise CHUNKING');
+        }
+        $this->client->sendCommand('MAIL FROM:' . $this->mailbox());
+        $this->client->sendCommand('RCPT TO:' . $this->mailbox());
+        $this->assertReplyCode(250, $this->client->sendRaw("BDAT 5\r\nHello"));
+        // RFC 3030: DATA must not be mixed with BDAT in one transaction
+        $this->assertReplyCode(503, $this->client->sendCommand('DATA'));
+        $this->client->sendCommand('RSET');
     }
 }

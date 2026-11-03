@@ -36,7 +36,15 @@
         <env name="SMTP_EXISTING_EMAIL" value="existing@example.com"/>
         <!-- examples/: an address on a domain the server must NOT relay to without login -->
         <env name="SMTP_RELAY_RECIPIENT" value="someone@example.org"/>
-        <!-- examples/: set to true for a server with a real certificate -->
-        <env name="SMTP_VERIFY_TLS" value="false"/>
+        <!-- examples/: port to test pregreet detection on (usually SMTP_PORT) -->
+        <env name="SMTP_PREGREET_PORT" value="2526"/>
+        <!-- examples/: verify certificates (trusted chain, valid for SMTP_EXPECTED_HOSTNAME) -->
+        <env name="SMTP_VERIFY_TLS" value="true"/>
+        <!-- examples/: the name the server should present in its certificate, greeting and EHLO -->
+        <env name="SMTP_EXPECTED_HOSTNAME" value="mail.example.com"/>
+        <!-- examples/: CA to trust instead of the system CAs (empty: system CAs) -->
+        <env name="SMTP_CA_FILE" value="docker/postfix/tls/ca.pem"/>
+        <!-- examples/: fail if the certificate expires within this many days -->
+        <env name="SMTP_CERT_MIN_DAYS" value="14"/>
     </php>
 </phpunit>

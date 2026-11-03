@@ -7,10 +7,11 @@ RUN apt-get update \
         postfix sasl2-bin libsasl2-modules openssl \
  && rm -rf /var/lib/apt/lists/*
 
+COPY tls/ca.pem tls/server.pem tls/server.key /opt/test-tls/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 25 465 587
+EXPOSE 25 465 587 2526
 HEALTHCHECK --interval=60s --timeout=3s --start-period=30s --start-interval=1s CMD postfix status
 
 ENTRYPOINT ["/entrypoint.sh"]

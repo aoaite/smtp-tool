@@ -48,13 +48,23 @@ abstract class SmtpServerTestCase extends TestCase
     }
 
     /**
-     * With SMTP_VERIFY_TLS=true the certificate must be valid for SMTP_HOSTNAME,
-     * otherwise any certificate (e.g. self-signed) is accepted.
+     * With SMTP_VERIFY_TLS=true the certificate must be trusted (by the system CAs, or
+     * SMTP_CA_FILE if set) and valid for SMTP_EXPECTED_HOSTNAME (or SMTP_HOSTNAME if not set);
+     * otherwise any certificate is accepted.
      */
-    protected function context(SMTPEncryption $encryption): SMTPConnectionContext
+    protected function context(SMTPEncryption $encryption, ?bool $verify = null): SMTPConnectionContext
     {
-        $verify = filter_var($this->env('SMTP_VERIFY_TLS', 'false'), FILTER_VALIDATE_BOOLEAN);
-        return new SMTPConnectionContext($encryption, $verify, $verify, !$verify);
+        $verify ??= filter_var($this->env('SMTP_VERIFY_TLS', 'false'), FILTER_VALIDATE_BOOLEAN);
+        $context = new SMTPConnectionContext($encryption, $verify, $verify, !$verify);
+        if ($verify) {
+            if ($this->env('SMTP_EXPECTED_HOSTNAME', '') !== '') {
+                $context->setPeerName($this->env('SMTP_EXPECTED_HOSTNAME'));
+            }
+            if ($this->env('SMTP_CA_FILE', '') !== '') {
+                $context->setCAFile($this->env('SMTP_CA_FILE'));
+            }
+        }
+        return $context;
     }
 
     /** Port 25 (SMTP_PORT), plaintext */
@@ -81,10 +91,15 @@ abstract class SmtpServerTestCase extends TestCase
         $this->connect((int)$this->env('SMTP_SSL_PORT'), SMTPEncryption::TLS);
     }
 
-    protected function connect(int $port, SMTPEncryption $encryption): void
+    protected function connect(int $port, SMTPEncryption $encryption, ?SMTPConnectionContext $context = null): void
     {
-        $connected = $this->client->connect($this->env('SMTP_HOSTNAME'), $port, $this->context($encryption));
+        $connected = $this->client->connect($this->env('SMTP_HOSTNAME'), $port, $context ?? $this->context($encryption));
         $this->assertTrue($connected, "Could not connect to port $port:\n" . $this->transcript());
+    }
+
+    protected function mailbox(): String
+    {
+        return '<' . $this->env('SMTP_EXISTING_EMAIL') . '>';
     }
 
     protected function login(): void
