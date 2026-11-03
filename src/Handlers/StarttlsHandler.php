@@ -14,7 +14,7 @@ class StarttlsHandler extends BasicHandler
         $code = $this->helper_parseResponseCode($data);
         if ($code == 220) {
             try {
-                $result = stream_socket_enable_crypto($connection->getConnection(), true, $connection->getContext()->getCryptoMethod(), $connection->getConnection());
+                $result = stream_socket_enable_crypto($connection->getConnection(), true, $connection->getContext()->getCryptoMethod());
             } catch (\Throwable $e) {
                 $this->client->getLogger()->log("ERROR: " . $e->getMessage(), 5);
                 throw new ConnectionException($e->getMessage(), 1, $e);

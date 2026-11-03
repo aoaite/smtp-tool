@@ -9,7 +9,7 @@ class VerifyHandler extends BasicHandler
 {
     private String $mailbox;
 
-    private array $results;
+    private array $results = [];
 
     function __construct(String $mailbox, SMTPClient $client)
     {

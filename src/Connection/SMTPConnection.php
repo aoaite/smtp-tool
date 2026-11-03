@@ -33,15 +33,11 @@ class SMTPConnection
 
     private function getTransport(): String
     {
-        switch ($this->getContext()->getEncryption()) {
-            case SMTPEncryption::STARTTLS:
-            case SMTPEncryption::NONE:
-                return 'tcp://';
-            case SMTPEncryption::SSL:
-                return 'ssl://';
-            case SMTPEncryption::TLS:
-                return 'tls://';
-        }
+        return match ($this->getContext()->getEncryption()) {
+            SMTPEncryption::STARTTLS, SMTPEncryption::NONE => 'tcp://',
+            SMTPEncryption::SSL => 'ssl://',
+            SMTPEncryption::TLS => 'tls://',
+        };
     }
 
     private function getConnectionAddress(): String
@@ -69,12 +65,22 @@ class SMTPConnection
             $this->logger->log("ERROR: " . $this->error_message, 5);
             throw new ConnectionException($this->error_message, $this->error_code);
         }
+        // Apply the timeout to reads/writes too, not only to the initial connect
+        stream_set_timeout($this->connection, (int)$this->timeout, (int)(fmod($this->timeout, 1) * 1000000));
         $this->logger->log("Connection established");
     }
 
     public function isConnected(): bool
     {
-        return !feof($this->connection);
+        return is_resource($this->connection) && !feof($this->connection);
+    }
+
+    public function close(): void
+    {
+        if (is_resource($this->connection)) {
+            fclose($this->connection);
+        }
+        $this->connection = null;
     }
 
     public function read(): ?String
@@ -86,7 +92,9 @@ class SMTPConnection
         while (($part = stream_get_line($this->connection, 1024, $this->CRLF)) !== false) {
             $this->logger->logReceived($part);
             $data .= $part . $this->CRLF;
-            if (substr($part, 3, 1) == ' ') {
+            // A reply line is "NNN-text" (more lines follow) or "NNN[ text]" (last line).
+            // The text is optional, so a bare "250" also terminates the reply.
+            if (substr($part, 3, 1) !== '-') {
                 break;
             }
         }
@@ -96,6 +104,11 @@ class SMTPConnection
     public function write($data): int|false
     {
         $this->logger->logSent($data);
+        if (!is_resource($this->connection)) {
+            $this->error = true;
+            $this->logger->log("ERROR: Not connected", 5);
+            throw new ConnectionException("Not connected");
+        }
         try {
             $result = fputs($this->connection, $data . $this->CRLF);
         } catch (\Throwable $e) {
@@ -103,10 +116,10 @@ class SMTPConnection
             throw new ConnectionException($e->getMessage(), 1, $e);
         }
 
-        if ($this->connection === false) {
+        if ($result === false) {
             $this->error = true;
-            $this->logger->log("ERROR: " . $this->error_message, 5);
-            throw new ConnectionException($this->error_code, $this->error_message);
+            $this->logger->log("ERROR: Failed to write to the connection", 5);
+            throw new ConnectionException("Failed to write to the connection");
         }
 
         return $result;

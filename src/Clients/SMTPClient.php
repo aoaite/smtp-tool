@@ -13,11 +13,9 @@ abstract class SMTPClient
 
     protected Logger $logger;
 
-    function __construct(Logger $logger = null)
+    function __construct(?Logger $logger = null)
     {
-        if (!$logger) {
-            $this->logger = new Logger();
-        }
+        $this->logger = $logger ?? new Logger();
     }
 
     abstract public function connect(String $host, int $port, SMTPConnectionContext $context): bool;

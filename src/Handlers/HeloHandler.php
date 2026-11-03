@@ -10,7 +10,7 @@ class HeloHandler extends BasicHandler
     private bool $esmtp;
     private String $host;
 
-    private array $capabilities;
+    private array $capabilities = [];
 
     function __construct(String $host, SMTPClient $client, bool $esmtp = true)
     {

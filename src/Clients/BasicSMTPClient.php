@@ -42,6 +42,8 @@ class BasicSMTPClient extends SMTPClient
                 $this->logger->log("STARTTLS connection was not established. Aborting connection", 5);
                 return false;
             }
+            // RFC 3207: capabilities learned before STARTTLS must be discarded, so greet again
+            $this->greetServer();
         }
         // TODO: Fix returns true for no reason
         return true;
@@ -49,7 +51,7 @@ class BasicSMTPClient extends SMTPClient
 
     public function isConnected(): bool
     {
-        return $this->connection->isConnected();
+        return isset($this->connection) && $this->connection->isConnected();
     }
 
     public function greetServer(): bool
@@ -84,7 +86,9 @@ class BasicSMTPClient extends SMTPClient
     {
         // TODO: Check if connection is already established
         $quit = new QuitHandler($this);
-        return $quit->handle($this->connection);
+        $result = $quit->handle($this->connection);
+        $this->connection->close();
+        return $result;
     }
 
     public function verify(String $mailbox, &$result): bool
@@ -132,7 +136,7 @@ class BasicSMTPClient extends SMTPClient
     public function getServerLoginCapabilities(): array
     {
         $result = [];
-        foreach ($this->server_capabilities as &$capability) {
+        foreach ($this->server_capabilities as $capability) {
             if (strtoupper(substr($capability, 0, 4)) == 'AUTH') {
                 $list = strtoupper(substr($capability, 5));
                 $token = strtok($list, ' ');
