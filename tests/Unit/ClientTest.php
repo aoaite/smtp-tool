@@ -195,8 +195,10 @@ class ClientTest extends TestCase
     {
         $server = FakeSmtpServer::start();
         $this->connect($server);
-        $this->assertSame("250 2.0.0 Ok\r\n", $this->client->sendCommand('NOOP'));
-        $this->assertStringStartsWith('502', $this->client->sendCommand('BOGUS'));
+        $reply = $this->client->sendCommand('NOOP');
+        $this->assertSame(250, $reply->getCode());
+        $this->assertSame("250 2.0.0 Ok\r\n", (string)$reply);
+        $this->assertSame(502, $this->client->sendCommand('BOGUS')->getCode());
     }
 
     public function test_commands_reject_line_breaks(): void
@@ -212,8 +214,8 @@ class ClientTest extends TestCase
         $server = FakeSmtpServer::start();
         $this->connect($server);
         // Two commands in one write: only the first reply is read here
-        $this->assertSame("250 2.0.0 Ok\r\n", $this->client->sendRaw("NOOP\r\nRSET\r\n"));
-        $this->assertSame("250 2.0.0 Ok\r\n", $this->client->getConnection()->read());
+        $this->assertSame(250, $this->client->sendRaw("NOOP\r\nRSET\r\n")->getCode());
+        $this->assertSame(250, $this->client->readReply()->getCode());
         $this->assertNull($this->client->sendRaw("NOOP\r\n", false));
         $this->assertSame(['EHLO localhost', 'NOOP', 'RSET'], array_slice($server->getCommands(), 0, 3));
     }

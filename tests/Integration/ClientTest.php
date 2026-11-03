@@ -163,8 +163,8 @@ class ClientTest extends TestCase
     public function test_send_raw_command(): void
     {
         $this->client->connect($this->host, $this->port, $this->context);
-        $this->assertStringStartsWith('250', $this->client->sendCommand('NOOP'));
-        $this->assertStringStartsWith('5', $this->client->sendRaw("BOGUS\r\n"));
+        $this->assertSame(250, $this->client->sendCommand('NOOP')->getCode());
+        $this->assertTrue($this->client->sendRaw("BOGUS\r\n")->isPermanentFailure());
         $this->assertTrue($this->client->disconnect());
     }
 }

@@ -5,6 +5,7 @@ namespace Aoaite\SmtpTool\Clients;
 use Aoaite\SmtpTool\Connection\SMTPConnection;
 use Aoaite\SmtpTool\Connection\SMTPConnectionContext;
 use Aoaite\SmtpTool\Connection\SMTPConnectionMeta;
+use Aoaite\SmtpTool\Connection\SMTPReply;
 use Aoaite\SmtpTool\Helpers\Logger;
 
 abstract class SMTPClient
@@ -26,10 +27,10 @@ abstract class SMTPClient
      * Sends a single command line and returns the server's (possibly multi-line) reply.
      * The command must not contain CR or LF characters; see sendRaw() for that.
      */
-    public function sendCommand(String $command): String
+    public function sendCommand(String $command): SMTPReply
     {
         $this->connection->write($command);
-        return $this->connection->read() ?? '';
+        return $this->readReply();
     }
 
     /**
@@ -37,10 +38,19 @@ abstract class SMTPClient
      * and, unless $readReply is false, returns the server's reply.
      * Intended for sending malformed input to test how a server handles it.
      */
-    public function sendRaw(String $data, bool $readReply = true): ?String
+    public function sendRaw(String $data, bool $readReply = true): ?SMTPReply
     {
         $this->connection->writeRaw($data);
-        return $readReply ? ($this->connection->read() ?? '') : null;
+        return $readReply ? $this->readReply() : null;
+    }
+
+    /**
+     * Reads the next reply, e.g. the remaining replies after pipelined commands sent with sendRaw().
+     * The code is 0 if nothing was received before the timeout or the connection was closed.
+     */
+    public function readReply(): SMTPReply
+    {
+        return SMTPReply::parse($this->connection->read());
     }
 
     public function getLogger(): Logger
