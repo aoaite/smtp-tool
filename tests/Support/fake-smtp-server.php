@@ -21,6 +21,9 @@ $options = json_decode(file_get_contents($argv[1]), true) + [
     'users' => [],                // username => password
     'vrfy' => [],                 // mailbox => reply
     'rejectRecipients' => [],     // forward-paths that get a 550
+    'pregreetWait' => 0,          // ms: send "220-" first and flag clients that talk before the
+                                  // final "220 " line (like postscreen's greet_action = enforce)
+    'rejectBdat' => false,        // reply 554 to BDAT
 ];
 
 $context = stream_context_create(['ssl' => [
@@ -67,7 +70,22 @@ $tls = (bool)$options['implicitTls'];
 $authenticated = false;
 $hasSender = false;
 $recipients = 0;
-$reply($options['greeting']);
+$bdat = null; // content received so far with BDAT, null if no BDAT transaction is running
+$pregreeted = false;
+
+if ($options['pregreetWait'] > 0) {
+    $reply('220-fake.test ESMTP');
+    $read = [$client];
+    $none = null;
+    if (stream_select($read, $none, $none, 0, $options['pregreetWait'] * 1000) > 0) {
+        $pregreeted = true;
+        $record('pregreet', fread($client, 4096) ?: '');
+        // Postscreen discards what was sent early and rejects the client later on
+    }
+    $reply('220 fake.test ESMTP');
+} else {
+    $reply($options['greeting']);
+}
 
 while (($line = stream_get_line($client, 4096, "\r\n")) !== false) {
     $record('command', $line);
@@ -127,6 +145,7 @@ while (($line = stream_get_line($client, 4096, "\r\n")) !== false) {
         case 'MAIL':
             $hasSender = true;
             $recipients = 0;
+            $bdat = null;
             $reply('250 2.1.0 Ok');
             break;
         case 'RCPT':
@@ -135,7 +154,9 @@ while (($line = stream_get_line($client, 4096, "\r\n")) !== false) {
                 break;
             }
             $path = strtok(substr($line, strlen('RCPT TO:')), ' ');
-            if (in_array($path, $options['rejectRecipients'])) {
+            if ($pregreeted) {
+                $reply('550 5.5.1 Protocol error');
+            } elseif (in_array($path, $options['rejectRecipients'])) {
                 $reply('550 5.1.1 ' . $path . ': Recipient address rejected');
             } else {
                 $recipients++;
@@ -143,6 +164,10 @@ while (($line = stream_get_line($client, 4096, "\r\n")) !== false) {
             }
             break;
         case 'DATA':
+            if ($bdat !== null) {
+                $reply('503 5.5.1 Error: DATA after BDAT');
+                break;
+            }
             if (!$recipients) {
                 $reply('554 5.5.1 Error: no valid recipients');
                 break;
@@ -161,9 +186,39 @@ while (($line = stream_get_line($client, 4096, "\r\n")) !== false) {
             $hasSender = false;
             $reply('250 2.0.0 Ok: queued as FAKE');
             break;
+        case 'BDAT':
+            if (!preg_match('/^BDAT (\d+)( LAST)?$/i', $line, $m)) {
+                $reply('501 5.5.4 Syntax: BDAT count [LAST]');
+                break;
+            }
+            // Read exactly the announced number of octets
+            $chunk = '';
+            while (strlen($chunk) < (int)$m[1]) {
+                $part = fread($client, (int)$m[1] - strlen($chunk));
+                if ($part === false || $part === '') {
+                    exit(1);
+                }
+                $chunk .= $part;
+            }
+            if (!$recipients) {
+                $reply('503 5.5.1 Error: need RCPT command');
+            } elseif ($options['rejectBdat']) {
+                $reply('554 5.6.0 Error: BDAT rejected');
+            } elseif (!empty($m[2])) {
+                $record('data', ($bdat ?? '') . $chunk);
+                $bdat = null;
+                $hasSender = false;
+                $recipients = 0;
+                $reply('250 2.0.0 Ok: queued as FAKE');
+            } else {
+                $bdat = ($bdat ?? '') . $chunk;
+                $reply('250 2.0.0 Ok: ' . strlen($chunk) . ' bytes');
+            }
+            break;
         case 'RSET':
             $hasSender = false;
             $recipients = 0;
+            $bdat = null;
             $reply('250 2.0.0 Ok');
             break;
         case 'NOOP':

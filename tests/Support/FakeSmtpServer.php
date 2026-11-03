@@ -38,7 +38,8 @@ final class FakeSmtpServer
     }
 
     /**
-     * Same as start(), with a self-signed certificate for STARTTLS / implicit TLS.
+     * Same as start(), with a certificate for STARTTLS / implicit TLS. The certificate is issued
+     * by a test CA (see caFile()) for "fake.test" and "*.wild.test".
      */
     public static function startWithTls(array $options = []): self
     {
@@ -84,6 +85,14 @@ final class FakeSmtpServer
         return $this->valuesOfType('auth');
     }
 
+    /**
+     * @return String[] the values recorded with the given type, e.g. "pregreet"
+     */
+    public function getTranscriptOfType(String $type): array
+    {
+        return $this->valuesOfType($type);
+    }
+
     private function valuesOfType(String $type): array
     {
         return array_values(array_map(
@@ -110,20 +119,64 @@ final class FakeSmtpServer
         $this->stop();
     }
 
+    /**
+     * The test CA that issued the fake server's certificate (PEM file).
+     */
+    public static function caFile(): String
+    {
+        return self::certificates()['ca'];
+    }
+
     private static function certificate(): array
     {
-        static $paths = null;
-        if ($paths === null) {
-            $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
-            $csr = openssl_csr_new(['commonName' => 'fake.test'], $key, ['digest_alg' => 'sha256']);
-            $cert = openssl_csr_sign($csr, null, $key, 1, ['digest_alg' => 'sha256']);
-            $paths = [tempnam(sys_get_temp_dir(), 'smtp-crt'), tempnam(sys_get_temp_dir(), 'smtp-key')];
-            openssl_x509_export_to_file($cert, $paths[0]);
-            openssl_pkey_export_to_file($key, $paths[1]);
-            register_shutdown_function(function () use ($paths) {
-                array_map('unlink', $paths);
+        $files = self::certificates();
+        return [$files['cert'], $files['key']];
+    }
+
+    private static function certificates(): array
+    {
+        static $files = null;
+        if ($files === null) {
+            $config = tempnam(sys_get_temp_dir(), 'smtp-cnf');
+            file_put_contents($config, implode("\n", [
+                '[req]',
+                'distinguished_name = dn',
+                '[dn]',
+                '[ca]',
+                'basicConstraints = critical,CA:TRUE',
+                'keyUsage = critical,keyCertSign,cRLSign',
+                'subjectKeyIdentifier = hash',
+                '[leaf]',
+                'basicConstraints = CA:FALSE',
+                'keyUsage = critical,digitalSignature,keyEncipherment',
+                'extendedKeyUsage = serverAuth',
+                'subjectAltName = DNS:fake.test,DNS:*.wild.test',
+                'authorityKeyIdentifier = keyid',
+            ]) . "\n");
+            $options = fn (String $section) => ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => $section];
+            $newKey = fn () => openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+
+            $caKey = $newKey();
+            $caCsr = openssl_csr_new(['commonName' => 'Fake Test CA', 'organizationName' => 'smtp-tool'], $caKey, $options('ca'));
+            $ca = openssl_csr_sign($caCsr, null, $caKey, 2, $options('ca'), 1);
+
+            $key = $newKey();
+            $csr = openssl_csr_new(['commonName' => 'fake.test'], $key, $options('leaf'));
+            $cert = openssl_csr_sign($csr, $ca, $caKey, 2, $options('leaf'), 2);
+
+            $files = [
+                'ca' => tempnam(sys_get_temp_dir(), 'smtp-ca'),
+                'cert' => tempnam(sys_get_temp_dir(), 'smtp-crt'),
+                'key' => tempnam(sys_get_temp_dir(), 'smtp-key'),
+            ];
+            openssl_x509_export_to_file($ca, $files['ca']);
+            openssl_x509_export_to_file($cert, $files['cert']);
+            openssl_pkey_export_to_file($key, $files['key']);
+            unlink($config);
+            register_shutdown_function(function () use ($files) {
+                array_map('unlink', $files);
             });
         }
-        return $paths;
+        return $files;
     }
 }

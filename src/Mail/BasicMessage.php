@@ -6,7 +6,8 @@ namespace Aoaite\SmtpTool\Mail;
  * A simple, well-formed plain text message.
  *
  * The From, To, Date, Message-ID and MIME headers are generated; extra headers
- * can be passed as ['Header-Name' => 'value'] and override generated ones.
+ * can be passed as ['Header-Name' => 'value'] and override generated ones. Line endings of the
+ * body are normalised to CRLF.
  */
 class BasicMessage implements Message
 {
@@ -16,6 +17,8 @@ class BasicMessage implements Message
     private String $body;
     private String $subject;
     private array $headers;
+    private String $date;
+    private String $messageId;
 
     /**
      * @param Contact|Contact[] $to
@@ -30,6 +33,10 @@ class BasicMessage implements Message
         $this->body = $body;
         $this->subject = $subject;
         $this->headers = $headers;
+        // Generated once, so the content is the same every time it is read
+        $this->date = date(DATE_RFC2822);
+        $domain = substr(strrchr($from->getEmail(), '@') ?: '@localhost', 1);
+        $this->messageId = '<' . bin2hex(random_bytes(16)) . '@' . $domain . '>';
     }
 
     public function getFrom(): Contact
@@ -77,9 +84,8 @@ class BasicMessage implements Message
 
     public function getHeaders(): array
     {
-        $domain = substr(strrchr($this->from->getEmail(), '@') ?: '@localhost', 1);
         $headers = [
-            'Date' => date(DATE_RFC2822),
+            'Date' => $this->date,
             'From' => $this->getRFCFrom(),
             'To' => $this->getRFCTo(),
         ];
@@ -89,7 +95,7 @@ class BasicMessage implements Message
                 : $this->subject;
         }
         $headers += [
-            'Message-ID' => '<' . bin2hex(random_bytes(16)) . '@' . $domain . '>',
+            'Message-ID' => $this->messageId,
             'MIME-Version' => '1.0',
             'Content-Type' => 'text/plain; charset=UTF-8',
             'Content-Transfer-Encoding' => '8bit',
@@ -106,19 +112,18 @@ class BasicMessage implements Message
         return $headers;
     }
 
-    public function getData(): String
+    public function getContent(): String
     {
         $data = '';
         foreach ($this->getHeaders() as $name => $value) {
             $data .= $name . ': ' . $value . "\r\n";
         }
         $data .= "\r\n" . $this->body;
-        // Normalise line endings to CRLF and make sure the data ends with one
+        // Normalise line endings to CRLF and make sure the content ends with one
         $data = preg_replace("/\r\n|\r|\n/", "\r\n", $data);
         if (!str_ends_with($data, "\r\n")) {
             $data .= "\r\n";
         }
-        // Dot-stuffing (RFC 5321 4.5.2): lines starting with "." get an extra "."
-        return preg_replace('/^\./m', '..', $data);
+        return $data;
     }
 }

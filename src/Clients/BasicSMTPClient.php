@@ -6,6 +6,7 @@ use Aoaite\SmtpTool\Auth\AuthMechanism;
 use Aoaite\SmtpTool\Connection\SMTPConnection;
 use Aoaite\SmtpTool\Connection\SMTPConnectionContext;
 use Aoaite\SmtpTool\Connection\SMTPEncryption;
+use Aoaite\SmtpTool\Connection\SMTPReply;
 use Aoaite\SmtpTool\Exceptions\CommunicationException;
 use Aoaite\SmtpTool\Exceptions\ConnectionException;
 use Aoaite\SmtpTool\Handlers\HeloHandler;
@@ -36,14 +37,9 @@ class BasicSMTPClient extends SMTPClient
      */
     public function connect(String $host, int $port, SMTPConnectionContext $context): bool
     {
-        $this->connection = new SMTPConnection($host, $port, $context, $this->logger);
-        $this->logger->setTimer(microtime(true));
-        $this->connection->connect();
+        $this->open($host, $port, $context);
 
-        $this->server_capabilities = [];
-        $this->connection_host_remote = '';
-        $this->greeting = $this->connection->read() ?? '';
-        if (intval(substr($this->greeting, 0, 3)) != 220) {
+        if ($this->readGreeting()->getCode() != 220) {
             $this->logger->log("Server did not send a 220 greeting. Aborting connection", 5);
             return false;
         }
@@ -51,17 +47,58 @@ class BasicSMTPClient extends SMTPClient
         $this->greetServer(); // Greet server
 
         if ($context->getEncryption() == SMTPEncryption::STARTTLS) {
-            if ($this->esmtp && !$this->hasCapability(StarttlsHandler::capability())) {
-                $this->logger->log("STARTTLS was not advertised by the server. Aborting connection", 5);
-                return false;
-            }
-            if (!$this->starttls()) {
-                $this->logger->log("STARTTLS connection was not established. Aborting connection", 5);
-                return false;
-            }
-            // RFC 3207: capabilities learned before STARTTLS must be discarded, so greet again
-            $this->greetServer();
+            return $this->startTls();
         }
+        return true;
+    }
+
+    /**
+     * Only opens the connection (including the TLS handshake for SSL / TLS encryption):
+     * nothing is read or sent. Together with readGreeting(), greetServer() and startTls() this
+     * allows non-standard sequences, e.g. talking before the greeting (pregreet):
+     *
+     *     $client->open($host, 25, $context);
+     *     $client->sendRaw("EHLO me\r\n", false); // before the banner
+     *     $client->readGreeting();
+     */
+    public function open(String $host, int $port, SMTPConnectionContext $context): void
+    {
+        $this->connection = new SMTPConnection($host, $port, $context, $this->logger);
+        $this->logger->setTimer(microtime(true));
+        $this->server_capabilities = [];
+        $this->connection_host_remote = '';
+        $this->greeting = '';
+        $this->connection->connect();
+    }
+
+    /**
+     * Reads the greeting banner (see open()). connect() does this for you.
+     */
+    public function readGreeting(): SMTPReply
+    {
+        if (!isset($this->connection)) {
+            throw new ConnectionException("Not connected");
+        }
+        $this->greeting = $this->connection->read() ?? '';
+        return SMTPReply::parse($this->greeting);
+    }
+
+    /**
+     * Sends STARTTLS, does the TLS handshake and greets the server again (RFC 3207: capabilities
+     * learned before STARTTLS must be discarded). connect() does this for STARTTLS encryption.
+     */
+    public function startTls(): bool
+    {
+        $this->requireConnection();
+        if ($this->esmtp && !$this->hasCapability(StarttlsHandler::capability())) {
+            $this->logger->log("STARTTLS was not advertised by the server. Aborting connection", 5);
+            return false;
+        }
+        if (!(new StarttlsHandler($this))->handle($this->connection)) {
+            $this->logger->log("STARTTLS connection was not established. Aborting connection", 5);
+            return false;
+        }
+        $this->greetServer();
         return true;
     }
 
@@ -71,6 +108,25 @@ class BasicSMTPClient extends SMTPClient
     public function getGreeting(): String
     {
         return $this->greeting;
+    }
+
+    /**
+     * The domain the server announces in its greeting banner (RFC 5321: the first word after
+     * the code), e.g. "mail.example.com". Null if there was no greeting.
+     */
+    public function getGreetingDomain(): ?String
+    {
+        $line = SMTPReply::parse($this->greeting)->getLines()[0] ?? '';
+        return $line === '' ? null : strtok($line, ' ');
+    }
+
+    /**
+     * The domain the server announces in its EHLO / HELO reply, e.g. "mail.example.com".
+     * Null before greetServer().
+     */
+    public function getEhloDomain(): ?String
+    {
+        return $this->connection_host_remote === '' ? null : strtok($this->connection_host_remote, ' ');
     }
 
     public function isConnected(): bool
@@ -94,16 +150,9 @@ class BasicSMTPClient extends SMTPClient
             }
         }
         $this->server_capabilities = $helo->getCapabilities();
-        $this->connection_host_remote = array_shift($this->server_capabilities);
+        $this->connection_host_remote = array_shift($this->server_capabilities) ?? '';
 
         return $result;
-    }
-
-    private function starttls(): bool
-    {
-        $this->requireConnection();
-        $starttls = new StarttlsHandler($this);
-        return $starttls->handle($this->connection);
     }
 
     /**
@@ -142,12 +191,33 @@ class BasicSMTPClient extends SMTPClient
      */
     public function sendMail(Message $message, array $dsnNotify = [], &$results = null): bool
     {
+        return $this->runTransaction($message, $dsnNotify, null, $results);
+    }
+
+    /**
+     * Like sendMail(), but sends the content with BDAT (RFC 3030 CHUNKING) instead of DATA.
+     * The content is sent as-is (no dot-stuffing), split into chunks of at most $chunkSize
+     * bytes; 0 sends a single "BDAT <size> LAST". If the server doesn't advertise CHUNKING a
+     * warning is logged and BDAT is sent anyway.
+     *
+     * @param String[] $dsnNotify see sendMail()
+     */
+    public function sendMailWithBdat(Message $message, int $chunkSize = 0, array $dsnNotify = [], &$results = null): bool
+    {
+        if (!$this->hasCapability('CHUNKING')) {
+            $this->logger->log("CHUNKING was not advertised by the server. Sending BDAT anyway", 4);
+        }
+        return $this->runTransaction($message, $dsnNotify, $chunkSize, $results);
+    }
+
+    private function runTransaction(Message $message, array $dsnNotify, ?int $bdatChunkSize, &$results): bool
+    {
         $this->requireConnection();
         if ($dsnNotify && !($this->esmtp && $this->hasCapability('DSN'))) {
             $this->logger->log("DSN was not advertised by the server. Sending without NOTIFY", 4);
             $dsnNotify = [];
         }
-        $handler = new SendMailHandler($message, $this, $dsnNotify);
+        $handler = new SendMailHandler($message, $this, $dsnNotify, $bdatChunkSize);
         $result = $handler->handle($this->connection);
         $results = $handler->getResults();
         return $result;

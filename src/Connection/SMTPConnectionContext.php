@@ -11,6 +11,8 @@ class SMTPConnectionContext
     private bool $sslAllowSelfSigned = false;
     private $crypto_method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
     private SMTPEncryption $encryption = SMTPEncryption::NONE;
+    private ?String $peerName = null;
+    private ?String $caFile = null;
 
     function __construct(SMTPEncryption $encryption = SMTPEncryption::NONE, bool $sslVerifyPeer = true, bool $sslVerifyPeerName = true, bool $sslAllowSelfSigned = false, int $crypto_method = STREAM_CRYPTO_METHOD_TLS_CLIENT)
     {
@@ -23,14 +25,21 @@ class SMTPConnectionContext
 
     private function getConnectionContextSSLOptions()
     {
-        return [
-            'ssl' => [
-                'verify_peer' => $this->sslVerifyPeer,
-                'verify_peer_name' => $this->sslVerifyPeerName,
-                'allow_self_signed' => $this->sslAllowSelfSigned,
-                'crypto_method' => $this->crypto_method
-            ]
+        $options = [
+            'verify_peer' => $this->sslVerifyPeer,
+            'verify_peer_name' => $this->sslVerifyPeerName,
+            'allow_self_signed' => $this->sslAllowSelfSigned,
+            'crypto_method' => $this->crypto_method,
+            // Keep the server's certificate for SMTPConnectionMeta::getPeerCertificate()
+            'capture_peer_cert' => true,
         ];
+        if ($this->peerName !== null) {
+            $options['peer_name'] = $this->peerName;
+        }
+        if ($this->caFile !== null) {
+            $options['cafile'] = $this->caFile;
+        }
+        return ['ssl' => $options];
     }
 
     public function getConnectionContext()
@@ -85,6 +94,35 @@ class SMTPConnectionContext
     public function getCryptoMethod(): int
     {
         return $this->crypto_method;
+    }
+
+    /**
+     * The name the certificate must be valid for (with SSL verify peer name enabled).
+     * Defaults to the host connected to; set it when connecting by IP address or through a
+     * different name, e.g. connect to "203.0.113.5" but require a certificate for "mx.example.com".
+     */
+    public function setPeerName(?String $peerName): void
+    {
+        $this->peerName = $peerName;
+    }
+
+    public function getPeerName(): ?String
+    {
+        return $this->peerName;
+    }
+
+    /**
+     * CA certificate(s) (PEM file) to verify the server certificate against, instead of the
+     * system's trusted CAs. Useful for servers with a private CA.
+     */
+    public function setCAFile(?String $caFile): void
+    {
+        $this->caFile = $caFile;
+    }
+
+    public function getCAFile(): ?String
+    {
+        return $this->caFile;
     }
 
     public function setEncryption(SMTPEncryption $encryption): void

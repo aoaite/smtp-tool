@@ -17,8 +17,8 @@ interface Message
     public function getEnvelopeRecipients(): array;
 
     /**
-     * Content sent after DATA, exactly as it should go over the wire (CRLF line
-     * endings, dot-stuffed), without the terminating "." line.
+     * The message (headers and body) with CRLF line endings, as it should arrive.
+     * Dot-stuffing for DATA is done when sending, unless this is a RawMessage.
      */
-    public function getData(): String;
+    public function getContent(): String;
 }

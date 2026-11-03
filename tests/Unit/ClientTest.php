@@ -137,7 +137,7 @@ class ClientTest extends TestCase
         $this->assertSame(['PLAIN'], $this->client->getServerLoginCapabilities());
     }
 
-    public function test_implicit_tls_rejects_self_signed_certificate_by_default(): void
+    public function test_implicit_tls_rejects_untrusted_certificate_by_default(): void
     {
         $server = FakeSmtpServer::startWithTls(['implicitTls' => true]);
         $this->expectException(ConnectionException::class);
@@ -145,12 +145,99 @@ class ClientTest extends TestCase
         $this->client->connect('127.0.0.1', $server->getPort(), new SMTPConnectionContext(SMTPEncryption::TLS));
     }
 
-    public function test_starttls_rejects_self_signed_certificate_by_default(): void
+    public function test_starttls_rejects_untrusted_certificate_by_default(): void
     {
         $server = FakeSmtpServer::startWithTls();
         $this->expectException(ConnectionException::class);
         $this->expectExceptionMessage('certificate verify failed');
         $this->client->connect('127.0.0.1', $server->getPort(), new SMTPConnectionContext(SMTPEncryption::STARTTLS));
+    }
+
+    public function test_greeting_and_ehlo_domain(): void
+    {
+        $this->assertNull($this->client->getGreetingDomain());
+        $this->assertNull($this->client->getEhloDomain());
+        $server = FakeSmtpServer::start(['greeting' => '220 mx.example.com ESMTP ready']);
+        $this->connect($server);
+        $this->assertSame('mx.example.com', $this->client->getGreetingDomain());
+        $this->assertSame('fake.test', $this->client->getEhloDomain());
+    }
+
+    public function test_pregreet_is_sent_before_banner(): void
+    {
+        $server = FakeSmtpServer::start(['pregreetWait' => 500]);
+        $this->client->open('127.0.0.1', $server->getPort(), new SMTPConnectionContext());
+        $this->client->sendRaw("EHLO early\r\n", false); // talk before the banner is complete
+        $greeting = $this->client->readGreeting();
+        $this->assertSame(220, $greeting->getCode());
+        $this->assertSame(['fake.test ESMTP', 'fake.test ESMTP'], $greeting->getLines());
+        $this->assertSame(["EHLO early\r\n"], $server->getTranscriptOfType('pregreet'));
+
+        // Like postscreen, the fake server lets the client go on but rejects it at RCPT
+        $this->client->greetServer();
+        $this->assertSame(250, $this->client->sendCommand('MAIL FROM:<a@example.com>')->getCode());
+        $this->assertSame(550, $this->client->sendCommand('RCPT TO:<b@example.com>')->getCode());
+    }
+
+    public function test_patient_client_passes_greeting_delay(): void
+    {
+        $server = FakeSmtpServer::start(['pregreetWait' => 300]);
+        $this->assertTrue($this->connect($server));
+        $this->assertStringStartsWith("220-fake.test ESMTP\r\n220 ", $this->client->getGreeting());
+        $this->assertSame([], $server->getTranscriptOfType('pregreet'));
+        $this->assertSame(250, $this->client->sendCommand('MAIL FROM:<a@example.com>')->getCode());
+        $this->assertSame(250, $this->client->sendCommand('RCPT TO:<b@example.com>')->getCode());
+    }
+
+    private function verifyingContext(SMTPEncryption $encryption, String $peerName): SMTPConnectionContext
+    {
+        $context = new SMTPConnectionContext($encryption);
+        $context->setCAFile(FakeSmtpServer::caFile());
+        $context->setPeerName($peerName);
+        return $context;
+    }
+
+    public function test_certificate_verified_against_ca_and_peer_name(): void
+    {
+        $server = FakeSmtpServer::startWithTls();
+        $this->assertTrue($this->client->connect('127.0.0.1', $server->getPort(), $this->verifyingContext(SMTPEncryption::STARTTLS, 'fake.test')));
+
+        $certificate = $this->client->getConnectionMeta()->getPeerCertificate();
+        $this->assertSame('fake.test', $certificate->getSubjectCommonName());
+        $this->assertSame(['fake.test', '*.wild.test'], $certificate->getDnsNames());
+        $this->assertSame('Fake Test CA', $certificate->getIssuerCommonName());
+        $this->assertSame('smtp-tool', $certificate->getIssuerOrganization());
+        $this->assertFalse($certificate->isSelfSigned());
+        $this->assertTrue($certificate->isValidAt());
+        $this->assertGreaterThanOrEqual(1, $certificate->getDaysUntilExpiry());
+        $this->assertTrue($certificate->matchesHostname('FAKE.test'));
+        $this->assertTrue($certificate->matchesHostname('mx.wild.test'));
+        $this->assertFalse($certificate->matchesHostname('wild.test'));
+        $this->assertFalse($certificate->matchesHostname('a.mx.wild.test'));
+        $this->assertFalse($certificate->matchesHostname('other.test'));
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $certificate->getFingerprint());
+    }
+
+    public function test_certificate_wildcard_peer_name_on_implicit_tls(): void
+    {
+        $server = FakeSmtpServer::startWithTls(['implicitTls' => true]);
+        $this->assertTrue($this->client->connect('127.0.0.1', $server->getPort(), $this->verifyingContext(SMTPEncryption::TLS, 'mx.wild.test')));
+        $this->assertNotNull($this->client->getConnectionMeta()->getPeerCertificate());
+    }
+
+    public function test_certificate_for_other_name_is_rejected(): void
+    {
+        $server = FakeSmtpServer::startWithTls();
+        $this->expectException(ConnectionException::class);
+        $this->expectExceptionMessage('did not match expected name');
+        $this->client->connect('127.0.0.1', $server->getPort(), $this->verifyingContext(SMTPEncryption::STARTTLS, 'other.test'));
+    }
+
+    public function test_no_certificate_without_tls(): void
+    {
+        $server = FakeSmtpServer::start();
+        $this->connect($server);
+        $this->assertNull($this->client->getConnectionMeta()->getPeerCertificate());
     }
 
     public function test_auth_plain(): void

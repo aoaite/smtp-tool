@@ -93,6 +93,53 @@ class SendMailTest extends TestCase
         $this->assertSame('RCPT TO:<b@example.com>', $this->transactionCommands($server)[1]);
     }
 
+    public function test_bdat_single_chunk(): void
+    {
+        $server = $this->start(['capabilities' => ['CHUNKING']]);
+        $message = new BasicMessage(new Contact('a@example.com'), new Contact('b@example.com'), ".not stuffed\nend");
+        $this->assertTrue($this->client->sendMailWithBdat($message, 0, [], $results));
+        $content = $message->getContent();
+        $this->assertSame(['MAIL FROM:<a@example.com>', 'RCPT TO:<b@example.com>', 'BDAT ' . strlen($content) . ' LAST'], $this->transactionCommands($server));
+        $this->assertSame([$content], $server->getData());
+        $this->assertStringEndsWith("\r\n.not stuffed\r\nend\r\n", $server->getData()[0]);
+    }
+
+    public function test_bdat_multiple_chunks(): void
+    {
+        $server = $this->start(['capabilities' => ['CHUNKING']]);
+        $content = "Subject: chunks\r\n\r\n0123456789abcdefghij\r\n";
+        $this->assertTrue($this->client->sendMailWithBdat(new CrudeMessage('<a@example.com>', '<b@example.com>', $content), 10));
+        // 41 bytes: four chunks of 10 and a last one of 1
+        $this->assertSame(['BDAT 10', 'BDAT 10', 'BDAT 10', 'BDAT 10', 'BDAT 1 LAST'], array_slice($this->transactionCommands($server), 2));
+        $this->assertSame([$content], $server->getData());
+    }
+
+    public function test_bdat_sends_fake_end_of_data_as_content(): void
+    {
+        $server = $this->start(['capabilities' => ['CHUNKING']]);
+        $content = "Subject: x\r\n\r\nbody\r\n.\r\nXSMUGGLED\r\n";
+        $this->assertTrue($this->client->sendMailWithBdat(new CrudeMessage('<a@example.com>', '<b@example.com>', $content)));
+        $this->assertSame([$content], $server->getData());
+        $this->assertNotContains('XSMUGGLED', $server->getCommands());
+        $this->assertSame(250, $this->client->sendCommand('NOOP')->getCode());
+    }
+
+    public function test_bdat_rejected_resets(): void
+    {
+        $server = $this->start(['capabilities' => ['CHUNKING'], 'rejectBdat' => true]);
+        $this->assertFalse($this->client->sendMailWithBdat(new CrudeMessage('<a@example.com>', '<b@example.com>', "x\r\n"), 0, [], $results));
+        $this->assertSame(554, $results[2]['code']);
+        $commands = $this->transactionCommands($server);
+        $this->assertSame('RSET', end($commands));
+    }
+
+    public function test_bdat_without_chunking_is_sent_anyway(): void
+    {
+        $server = $this->start(['capabilities' => []]);
+        $this->assertTrue($this->client->sendMailWithBdat(new CrudeMessage('<a@example.com>', '<b@example.com>', "x\r\n")));
+        $this->assertStringContainsString('CHUNKING was not advertised', json_encode($this->client->getLogger()->getLogs()));
+    }
+
     public function test_crude_message_data_is_sent_verbatim(): void
     {
         $server = $this->start();

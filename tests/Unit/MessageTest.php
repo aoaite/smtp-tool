@@ -37,13 +37,14 @@ class MessageTest extends TestCase
 
         $this->assertSame(['<to@example.com>'], $message->getEnvelopeRecipients());
         $this->assertSame('<from@example.com>', $message->getEnvelopeFrom());
-        $this->assertStringEndsWith("\r\n\r\nbody\r\n", $message->getData());
+        $this->assertStringEndsWith("\r\n\r\nbody\r\n", $message->getContent());
     }
 
-    public function test_data_is_normalised_and_dot_stuffed(): void
+    public function test_content_line_endings_are_normalised(): void
     {
-        $message = new BasicMessage(new Contact('a@example.com'), new Contact('b@example.com'), ".one\r\ntwo\n.\rthree\r\n");
-        $this->assertStringEndsWith("\r\n\r\n..one\r\ntwo\r\n..\r\nthree\r\n", $message->getData());
+        // Not dot-stuffed: that happens when sending with DATA (BDAT sends the content as-is)
+        $message = new BasicMessage(new Contact('a@example.com'), new Contact('b@example.com'), ".one\r\ntwo\n.\rthree");
+        $this->assertStringEndsWith("\r\n\r\n.one\r\ntwo\r\n.\r\nthree\r\n", $message->getContent());
     }
 
     public function test_requires_recipient(): void
