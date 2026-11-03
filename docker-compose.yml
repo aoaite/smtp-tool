@@ -1,0 +1,19 @@
+# Test mail server for the integration tests:
+#   docker compose up -d --wait
+#   composer test:integration
+services:
+  postfix:
+    build: docker/postfix
+    environment:
+      SMTP_DOMAIN: example.com
+      SMTP_USERNAME: username
+      SMTP_PASSWORD: password
+      SMTP_MAILBOX: existing
+      # Extra main.cf settings, one per line, e.g. to test a weaker configuration:
+      # SMTP_POSTCONF: |
+      #   smtpd_forbid_bare_newline = no
+    ports:
+      - "127.0.0.1:2525:25"
+      - "127.0.0.1:4650:465"
+      - "127.0.0.1:5870:587"
+      - "127.0.0.1:2526:2526"   # postscreen (pregreet detection)

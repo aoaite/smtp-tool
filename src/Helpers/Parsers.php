@@ -4,13 +4,14 @@ namespace Aoaite\SmtpTool\Helpers;
 
 trait Parsers
 {
-    protected function helper_parseResponseCode(String $data): ?int
+    protected function helper_parseResponseCode(?String $data): ?int
     {
-        return intval(substr($data, 0, 3));
+        return intval(substr($data ?? '', 0, 3));
     }
 
-    protected function helper_parseList(String $data, bool $strip_status_codes = true): array
+    protected function helper_parseList(?String $data, bool $strip_status_codes = true): array
     {
+        $data ??= '';
         $result = [];
         $token = strtok($data, $this->client->getConnection()->getSeparators());
         while ($token !== false) {

@@ -5,10 +5,25 @@ namespace Aoaite\SmtpTool\Connection;
 class SMTPConnectionMeta
 {
     private array $meta;
+    private array $sslOptions;
 
     function __construct(SMTPConnection $connection)
     {
-        $this->meta = stream_get_meta_data($connection->getConnection());
+        $stream = $connection->getConnection();
+        if (!is_resource($stream)) {
+            throw new \Aoaite\SmtpTool\Exceptions\ConnectionException("Not connected");
+        }
+        $this->meta = stream_get_meta_data($stream);
+        $this->sslOptions = stream_context_get_options($stream)['ssl'] ?? [];
+    }
+
+    /**
+     * The server's certificate, if the connection is encrypted.
+     */
+    public function getPeerCertificate(): ?SMTPCertificate
+    {
+        $certificate = $this->sslOptions['peer_certificate'] ?? null;
+        return $certificate instanceof \OpenSSLCertificate ? SMTPCertificate::fromOpenSSL($certificate) : null;
     }
 
     public function getRawCrypto(): ?array

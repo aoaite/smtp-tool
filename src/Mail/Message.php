@@ -4,9 +4,21 @@ namespace Aoaite\SmtpTool\Mail;
 
 interface Message
 {
-    public function getRFCFrom(): String;
+    /**
+     * Reverse-path sent after "MAIL FROM:", e.g. "<john@example.com>" (or "<>" for a null sender).
+     */
+    public function getEnvelopeFrom(): String;
 
-    public function getRFCTo(): String;
+    /**
+     * Forward-paths, each sent after "RCPT TO:", e.g. ["<jane@example.com>"].
+     *
+     * @return String[]
+     */
+    public function getEnvelopeRecipients(): array;
 
-    public function getRFCBody(): String;
+    /**
+     * The message (headers and body) with CRLF line endings, as it should arrive.
+     * Dot-stuffing for DATA is done when sending, unless this is a RawMessage.
+     */
+    public function getContent(): String;
 }
