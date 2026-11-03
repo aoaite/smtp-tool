@@ -22,6 +22,7 @@ class SMTPConnection
 
     private $connection;
     private Logger $logger;
+    private ?String $pendingLine = null;
 
     function __construct(String $host, int $port, SMTPConnectionContext $context, Logger $logger, int $timeout = 16)
     {
@@ -81,6 +82,7 @@ class SMTPConnection
             fclose($this->connection);
         }
         $this->connection = null;
+        $this->pendingLine = null;
     }
 
     public function read(): ?String
@@ -88,9 +90,16 @@ class SMTPConnection
         if (!is_resource($this->connection))
             return null;
         $data = "";
-        // TODO: Wrap in try / catch
-        while (($part = stream_get_line($this->connection, 1024, $this->CRLF)) !== false) {
-            $this->logger->logReceived($part);
+        $code = null;
+        while (($part = $this->nextLine()) !== null) {
+            // All lines of a reply share its code. A line with another code means the previous
+            // reply was never finished (e.g. postscreen leaves its "220-" greeting unfinished for
+            // clients that talk early): keep that line for the next read.
+            if ($code !== null && preg_match('/^\d{3}/', $part) && substr($part, 0, 3) !== $code) {
+                $this->pendingLine = $part;
+                break;
+            }
+            $code ??= substr($part, 0, 3);
             $data .= $part . $this->CRLF;
             // A reply line is "NNN-text" (more lines follow) or "NNN[ text]" (last line).
             // The text is optional, so a bare "250" also terminates the reply.
@@ -99,6 +108,21 @@ class SMTPConnection
             }
         }
         return $data;
+    }
+
+    private function nextLine(): ?String
+    {
+        if ($this->pendingLine !== null) {
+            $line = $this->pendingLine;
+            $this->pendingLine = null;
+            return $line;
+        }
+        $line = stream_get_line($this->connection, 1024, $this->CRLF);
+        if ($line === false) {
+            return null;
+        }
+        $this->logger->logReceived($line);
+        return $line;
     }
 
     /**

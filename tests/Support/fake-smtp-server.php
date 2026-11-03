@@ -22,7 +22,9 @@ $options = json_decode(file_get_contents($argv[1]), true) + [
     'vrfy' => [],                 // mailbox => reply
     'rejectRecipients' => [],     // forward-paths that get a 550
     'pregreetWait' => 0,          // ms: send "220-" first and flag clients that talk before the
-                                  // final "220 " line (like postscreen's greet_action = enforce)
+                                  // final "220 " line. Like postscreen (greet_action = enforce) the
+                                  // greeting is then never finished, the commands are answered
+                                  // and RCPT is rejected
     'rejectBdat' => false,        // reply 554 to BDAT
 ];
 
@@ -79,10 +81,10 @@ if ($options['pregreetWait'] > 0) {
     $none = null;
     if (stream_select($read, $none, $none, 0, $options['pregreetWait'] * 1000) > 0) {
         $pregreeted = true;
-        $record('pregreet', fread($client, 4096) ?: '');
-        // Postscreen discards what was sent early and rejects the client later on
+        $record('pregreet', stream_socket_recvfrom($client, 4096, STREAM_PEEK) ?: '');
+    } else {
+        $reply('220 fake.test ESMTP');
     }
-    $reply('220 fake.test ESMTP');
 } else {
     $reply($options['greeting']);
 }

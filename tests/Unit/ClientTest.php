@@ -168,13 +168,13 @@ class ClientTest extends TestCase
         $server = FakeSmtpServer::start(['pregreetWait' => 500]);
         $this->client->open('127.0.0.1', $server->getPort(), new SMTPConnectionContext());
         $this->client->sendRaw("EHLO early\r\n", false); // talk before the banner is complete
+        // Like postscreen, the fake server never finishes its "220-" greeting for early talkers ...
         $greeting = $this->client->readGreeting();
-        $this->assertSame(220, $greeting->getCode());
-        $this->assertSame(['fake.test ESMTP', 'fake.test ESMTP'], $greeting->getLines());
+        $this->assertSame("220-fake.test ESMTP\r\n", $greeting->getRaw());
         $this->assertSame(["EHLO early\r\n"], $server->getTranscriptOfType('pregreet'));
-
-        // Like postscreen, the fake server lets the client go on but rejects it at RCPT
-        $this->client->greetServer();
+        // ... answers the early EHLO (a separate reply, not part of the greeting) ...
+        $this->assertSame(250, $this->client->readReply()->getCode());
+        // ... and rejects the client at RCPT
         $this->assertSame(250, $this->client->sendCommand('MAIL FROM:<a@example.com>')->getCode());
         $this->assertSame(550, $this->client->sendCommand('RCPT TO:<b@example.com>')->getCode());
     }
@@ -229,7 +229,7 @@ class ClientTest extends TestCase
     {
         $server = FakeSmtpServer::startWithTls();
         $this->expectException(ConnectionException::class);
-        $this->expectExceptionMessage('did not match expected name');
+        $this->expectExceptionMessage('did not match expected'); // wording differs between PHP versions
         $this->client->connect('127.0.0.1', $server->getPort(), $this->verifyingContext(SMTPEncryption::STARTTLS, 'other.test'));
     }
 
