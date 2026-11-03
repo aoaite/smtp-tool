@@ -11,6 +11,6 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 25 465 587
-HEALTHCHECK --interval=2s --timeout=2s --retries=30 CMD postfix status
+HEALTHCHECK --interval=60s --timeout=3s --start-period=30s --start-interval=1s CMD postfix status
 
 ENTRYPOINT ["/entrypoint.sh"]

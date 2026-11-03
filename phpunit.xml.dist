@@ -17,6 +17,9 @@
         <testsuite name="integration">
             <directory>tests/Integration</directory>
         </testsuite>
+        <testsuite name="examples">
+            <directory>examples</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>
@@ -31,5 +34,9 @@
         <env name="SMTP_USERNAME" value="username"/>
         <env name="SMTP_PASSWORD" value="password"/>
         <env name="SMTP_EXISTING_EMAIL" value="existing@example.com"/>
+        <!-- examples/: an address on a domain the server must NOT relay to without login -->
+        <env name="SMTP_RELAY_RECIPIENT" value="someone@example.org"/>
+        <!-- examples/: set to true for a server with a real certificate -->
+        <env name="SMTP_VERIFY_TLS" value="false"/>
     </php>
 </phpunit>

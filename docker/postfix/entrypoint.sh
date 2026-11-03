@@ -3,9 +3,13 @@
 #
 #   25  smtp        STARTTLS offered, AUTH only after STARTTLS
 #   465 smtps       implicit TLS, AUTH
-#   587 submission  STARTTLS required, AUTH
+#   587 submission  STARTTLS required, AUTH required
 #
 # A self-signed certificate is generated on first start.
+#
+# SMTP_POSTCONF can hold extra main.cf settings, one per line, applied last. E.g. to make the
+# server vulnerable to SMTP smuggling again and watch examples/MalformedInputTest.php fail:
+#   SMTP_POSTCONF="smtpd_forbid_bare_newline = no"
 set -eu
 
 : "${SMTP_DOMAIN:=example.com}"
@@ -13,6 +17,7 @@ set -eu
 : "${SMTP_USERNAME:=username}"
 : "${SMTP_PASSWORD:=password}"
 : "${SMTP_MAILBOX:=existing}"   # local mailbox that exists: $SMTP_MAILBOX@$SMTP_DOMAIN
+: "${SMTP_POSTCONF:=}"
 
 [ -f /etc/postfix/main.cf ] || cp /usr/share/postfix/main.cf.debian /etc/postfix/main.cf
 
@@ -55,14 +60,20 @@ postconf -e \
     "smtpd_sasl_type = cyrus" \
     "smtpd_sasl_path = smtpd" \
     "smtpd_sasl_local_domain = \$myhostname" \
-    "smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination"
+    "smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination" \
+    "smtpd_forbid_bare_newline = yes"
 
 # Run without chroot so smtpd can read /etc/sasldb2
 postconf -F '*/*/chroot = n'
 postconf -M "submission/inet = submission inet n - n - - smtpd"
 postconf -P "submission/inet/smtpd_tls_security_level = encrypt"
+postconf -P "submission/inet/smtpd_client_restrictions = permit_sasl_authenticated,reject"
 postconf -M "smtps/inet = smtps inet n - n - - smtpd"
 postconf -P "smtps/inet/smtpd_tls_wrappermode = yes"
+
+printf '%s\n' "$SMTP_POSTCONF" | while IFS= read -r setting; do
+    if [ -n "$setting" ]; then postconf -e "$setting"; fi
+done
 
 newaliases
 exec postfix start-fg

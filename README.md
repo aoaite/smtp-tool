@@ -74,9 +74,15 @@ To send malformed input on purpose:
 ```php
 use Aoaite\SmtpTool\Mail\CrudeMessage;
 
-// Raw bytes, no line ending appended; returns the server's reply
-$client->sendRaw("NOOP\r\nNOOP\r\n");     // pipelined: read the second reply with $client->getConnection()->read()
-$client->sendCommand('XFOO');                 // a single (validated) command line
+// A single (validated) command line; returns an SMTPReply
+$reply = $client->sendCommand('XFOO');
+$reply->getCode();            // 500
+$reply->getEnhancedCode();    // "5.5.2"
+$reply->isPermanentFailure(); // true
+
+// Raw bytes, no line ending appended; returns the first reply
+$client->sendRaw("NOOP\r\nNOOP\r\n");
+$client->readReply();         // the second (pipelined) reply
 
 // Envelope and DATA sent exactly as given: no normalisation, no dot-stuffing.
 // E.g. check that a server does not accept "<LF>.<LF>" as end of data (SMTP smuggling):
@@ -88,6 +94,18 @@ $client->sendMail(new CrudeMessage(
 
 // Change the line separator used for commands and replies (default "\r\n")
 $client->getConnection()->setSeparators("\n");
+```
+
+## Example tests
+
+[`examples/`](examples/) has ready-made PHPUnit tests for checking a server: greeting and TLS,
+authentication (not offered in plaintext, wrong passwords rejected, submission requires login),
+mail transactions (no open relay, unknown recipients rejected, null sender accepted) and malformed
+input (out-of-sequence commands, SMTP smuggling). Point them at your server via `phpunit.xml`
+and run:
+
+```bash
+composer test:examples
 ```
 
 ## Tests
@@ -107,6 +125,10 @@ docker compose up -d --wait
 ```bash
 composer test:integration
 ```
+
+`SMTP_POSTCONF` in `docker-compose.yml` adds Postfix settings, e.g.
+`smtpd_forbid_bare_newline = no` makes the test server vulnerable to SMTP smuggling so you can
+watch the examples catch it.
 
 To test your own server, copy `phpunit.xml.dist` to `phpunit.xml` (git-ignored) and change the
 `SMTP_*` values, or set them as environment variables. Integration tests are skipped when the

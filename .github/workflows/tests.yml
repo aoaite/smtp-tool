@@ -22,7 +22,7 @@ jobs:
       - run: vendor/bin/phpunit --testsuite unit
 
   integration:
-    name: Integration (Postfix)
+    name: Integration + examples (Postfix)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,6 @@ jobs:
           coverage: none
       - run: composer install --no-interaction --no-progress
       - run: docker compose up -d --build --wait
-      - run: vendor/bin/phpunit --testsuite integration --fail-on-skipped
+      - run: vendor/bin/phpunit --testsuite integration,examples --fail-on-skipped
       - if: failure()
         run: docker compose logs postfix

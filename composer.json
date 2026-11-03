@@ -17,7 +17,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\": "tests/"
+            "Tests\\": "tests/",
+            "Examples\\": "examples/"
         }
     },
     "authors": [
@@ -37,6 +38,7 @@
     "minimum-stability": "stable",
     "scripts": {
         "test": "phpunit --testsuite unit",
-        "test:integration": "phpunit --testsuite integration"
+        "test:integration": "phpunit --testsuite integration",
+        "test:examples": "phpunit --testsuite examples"
     }
 }
